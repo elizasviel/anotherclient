@@ -4,7 +4,7 @@
   "description": "Colyseus + Phaser: Client-side",
   "scripts": {
     "start": "parcel serve index.html",
-    "build": "parcel build index.html",
+    "build": "parcel build index.html --no-scope-hoist",
     "test": "echo \"Error: no test specified\" && exit 1",
     "heroku-postbuild": "npm run build"
   },
@@ -26,5 +26,10 @@
   },
   "engines": {
     "node": "18.x"
-  }
+  },
+  "browserslist": [
+    "last 2 Chrome versions",
+    "last 2 Firefox versions",
+    "last 2 Safari versions"
+  ]
 }
