@@ -1,7 +1,6 @@
 import Phaser from "phaser";
-
 import { Village } from "./scenes/Village";
-import { UI } from "./scenes/UI";
+import { Login } from "./scenes/Login";
 
 const config: Phaser.Types.Core.GameConfig = {
   type: Phaser.AUTO,
@@ -17,7 +16,7 @@ const config: Phaser.Types.Core.GameConfig = {
     default: "arcade",
   },
   pixelArt: true,
-  scene: [Village, UI],
+  scene: [Login, Village],
 };
 
 new Phaser.Game(config);
