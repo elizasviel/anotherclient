@@ -8,5 +8,7 @@
 
 export const BACKEND_URL =
   window.location.href.indexOf("localhost") === -1
-    ? `https://platformer-bcdf5c8186fd.herokuapp.com`
+    ? `ws://localhost:2567`
     : "ws://localhost:2567";
+
+//https://platformer-bcdf5c8186fd.herokuapp.com

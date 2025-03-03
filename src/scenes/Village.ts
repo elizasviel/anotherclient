@@ -1,19 +1,16 @@
 import Phaser from "phaser";
 import { Room, Client } from "colyseus.js";
 import { BACKEND_URL } from "../backend";
-import { ChatUI } from "../ChatUI";
 
 export class Village extends Phaser.Scene {
   room: Room;
   currentPlayer: Phaser.Types.Physics.Arcade.SpriteWithDynamicBody;
   playerEntities: {
-    [sessionId: string]: Phaser.Types.Physics.Arcade.SpriteWithDynamicBody;
+    [username: string]: Phaser.Types.Physics.Arcade.SpriteWithDynamicBody;
   } = {};
 
   localRef: Phaser.GameObjects.Rectangle;
   remoteRef: Phaser.GameObjects.Rectangle;
-
-  cursorKeys: Phaser.Types.Input.Keyboard.CursorKeys;
 
   inputPayload = {
     left: false,
@@ -22,48 +19,33 @@ export class Village extends Phaser.Scene {
     down: false,
     jump: false,
     attack: false,
+    loot: false,
     tick: undefined,
+    username: "",
   };
+
+  private cursorKeys: Phaser.Types.Input.Keyboard.CursorKeys;
+  private collectKey: Phaser.Input.Keyboard.Key;
 
   elapsedTime = 0;
   fixedTimeStep = 1000 / 60;
 
   currentTick: number = 0;
 
-  obstacles: (
-    | Phaser.GameObjects.Rectangle
-    | Phaser.Types.Physics.Arcade.SpriteWithDynamicBody
-  )[] = [];
+  obstacles: Phaser.GameObjects.Rectangle[] = [];
 
   private map: Phaser.Tilemaps.Tilemap;
   private tileset: Phaser.Tilemaps.Tileset;
 
-  monsterEntities: {
+  private monsterEntities: {
     [index: number]: Phaser.Types.Physics.Arcade.SpriteWithDynamicBody;
   } = {};
 
-  // does this belong here or on player somewhere?
-  private isAttacking: boolean = false;
-
-  // Add layer property declaration
-  private layer: Phaser.Tilemaps.TilemapLayer;
-
-  // Add property to store loot entities
   private lootEntities: {
     [index: number]: Phaser.Types.Physics.Arcade.SpriteWithDynamicBody;
   } = {};
 
-  private collectKey: Phaser.Input.Keyboard.Key;
-
-  // Add a property for the chat UI
-  private chatUI: ChatUI;
-  private playerName: string = "";
-  private chatInputActive: boolean = false;
-
-  // Add properties for player names and coins
-  private playerNameTexts: { [sessionId: string]: Phaser.GameObjects.Text } =
-    {};
-  private coinCount: number = 0;
+  private playerNameTexts: { [username: string]: Phaser.GameObjects.Text } = {};
 
   constructor() {
     super({ key: "village" });
@@ -82,7 +64,7 @@ export class Village extends Phaser.Scene {
       "character-idle",
       "assets/Character/Idle/Idle-Sheet.png",
       {
-        frameWidth: 64, // Adjust these values based on your spritesheet
+        frameWidth: 64,
         frameHeight: 64,
       }
     );
@@ -90,7 +72,7 @@ export class Village extends Phaser.Scene {
       "character-run",
       "assets/Character/Run/Run-Sheet.png",
       {
-        frameWidth: 80, // 640/8 = 80
+        frameWidth: 80,
         frameHeight: 80,
       }
     );
@@ -98,7 +80,7 @@ export class Village extends Phaser.Scene {
       "character-jump",
       "assets/Character/Jump-All/Jump-All-Sheet.png",
       {
-        frameWidth: 64, // 960/15 = 64
+        frameWidth: 64,
         frameHeight: 64,
       }
     );
@@ -119,7 +101,6 @@ export class Village extends Phaser.Scene {
       }
     );
 
-    //more complex movement logic
     this.load.spritesheet("boar-idle", "assets/Mob/Boar/Idle/Idle-Sheet.png", {
       frameWidth: 48,
       frameHeight: 32,
@@ -145,19 +126,15 @@ export class Village extends Phaser.Scene {
       }
     );
 
-    // Replace the static coin image with a spritesheet
     this.load.spritesheet("coin", "assets/Loot/coin.png", {
-      frameWidth: 8, // Adjust these values based on your spritesheet
+      frameWidth: 8,
       frameHeight: 8,
     });
   }
 
   async create() {
-    // Add these lines at the start of create() to set up the background
     const bg = this.add.image(0, 0, "forest-bg");
     bg.setOrigin(0, 0);
-
-    // Make the background scroll with the camera but slower (parallax effect)
     bg.setScrollFactor(0.6);
 
     // Create tilemap
@@ -165,13 +142,7 @@ export class Village extends Phaser.Scene {
     this.tileset = this.map.addTilesetImage("MainLevBuild", "tileset");
     const buildingsTileset = this.map.addTilesetImage("VP2_Main", "buildings");
 
-    // Create layer with both tilesets
-    this.layer = this.map.createLayer(
-      0,
-      [this.tileset, buildingsTileset],
-      0,
-      0
-    );
+    this.map.createLayer(0, [this.tileset, buildingsTileset], 0, 0);
 
     // Set world bounds based on map dimensions
     const mapWidth = this.map.widthInPixels;
@@ -181,94 +152,15 @@ export class Village extends Phaser.Scene {
     this.cameras.main.setBounds(0, 0, mapWidth, mapHeight);
 
     this.cursorKeys = this.input.keyboard.createCursorKeys();
+    this.collectKey = this.input.keyboard.addKey("Z");
 
     // connect with the room
     await this.connect();
 
-    // Initialize chat UI
-    this.chatUI = new ChatUI(
-      (message) => {
-        this.room.send("chat", message);
-      },
-      (isFocused) => {
-        this.chatInputActive = isFocused;
-        if (isFocused) {
-          this.input.keyboard.removeCapture(
-            Phaser.Input.Keyboard.KeyCodes.SPACE
-          );
-        } else {
-          this.input.keyboard.addCapture(Phaser.Input.Keyboard.KeyCodes.SPACE);
-        }
-      }
-    );
-
-    this.room.onMessage("chat", (message) => {
-      const isSelf = message.sessionId === this.room.sessionId;
-      this.chatUI.addMessage(message.sender, message.message, isSelf);
-    });
-
-    this.room.onMessage("system", (message) => {
-      this.chatUI.addSystemMessage(message.message);
-    });
-
     // Handle login success message
     this.room.onMessage("loginSuccess", (message) => {
-      this.playerName = message.username;
-      //save player name in registry for other scenes
-      this.registry.set("playerName", this.playerName);
-      this.coinCount = message.coins;
-      this.game.events.emit("updateCoins", this.coinCount);
-
-      // Update the player's name text
-      if (this.playerNameTexts[this.room.sessionId]) {
-        this.playerNameTexts[this.room.sessionId].setText(this.playerName);
-      }
-
-      this.chatUI.addSystemMessage(
-        `Welcome back, ${this.playerName}! You have ${message.coins} coins.`
-      );
+      this.registry.set("playerName", message.username);
     });
-
-    // Add this in the create() method after other message handlers
-    this.room.onMessage("playerNameUpdate", (message) => {
-      // Update the player name text for the specific player
-      if (this.playerNameTexts[message.sessionId]) {
-        this.playerNameTexts[message.sessionId].setText(message.name);
-        console.log(
-          `Updated name for player ${message.sessionId} to ${message.name}`
-        );
-      } else {
-        console.log(`Could not find name text for player ${message.sessionId}`);
-      }
-    });
-
-    // Keep the existing setName handler for the current player
-    this.room.onMessage("setName", (message) => {
-      if (this.playerNameTexts[this.room.sessionId]) {
-        this.playerNameTexts[this.room.sessionId].setText(message.name);
-      }
-    });
-
-    // Use player name from previous scene or prompt for a new one
-    if (this.registry.get("playerName")) {
-      this.playerName = this.registry.get("playerName");
-      // Login with existing username
-      this.room.send("login", { username: this.playerName });
-    } else {
-      setTimeout(() => {
-        const name = prompt(
-          "Enter your username to login or create an account:",
-          "Player"
-        );
-        if (name && name.trim() !== "") {
-          this.playerName = name.trim();
-          // Store player name in registry for other scenes
-          this.registry.set("playerName", this.playerName);
-          // Login with new username
-          this.room.send("login", { username: this.playerName });
-        }
-      }, 1000);
-    }
 
     // Create obstacles based on server state
     this.room.state.obstacles.onAdd((obstacle) => {
@@ -279,7 +171,6 @@ export class Village extends Phaser.Scene {
         obstacle.height
       );
 
-      // Set one-way platform property based on server data
       if (obstacle.isOneWayPlatform) {
         sprite.setData("isOneWayPlatform", true);
       }
@@ -287,40 +178,30 @@ export class Village extends Phaser.Scene {
       this.obstacles.push(sprite);
     });
 
-    // Player setup
-    this.room.state.players.onAdd((player, sessionId) => {
+    // onadd also triggers when other players join  the room
+    this.room.state.spawnedPlayers.onAdd((player) => {
       const entity = this.physics.add.sprite(
         player.x,
         player.y,
         "character-idle"
       );
-      entity.setDisplaySize(48, 48); // Adjust size as needed
-      this.playerEntities[sessionId] = entity;
+      entity.setDisplaySize(48, 48);
+      this.playerEntities[player.username] = entity;
 
-      // Add player name text above the player
-      // Get the name from player data if available, otherwise use a placeholder
-      let displayName = "";
-      if (sessionId === this.room.sessionId) {
-        displayName = this.playerName || "You";
-      } else if (player.data && player.data.name) {
-        displayName = player.data.name;
-      } else {
-        displayName = "Player " + sessionId.substring(0, 4);
-      }
-
-      console.log(`Creating name text for ${sessionId}: ${displayName}`);
-
-      const nameText = this.add.text(player.x, player.y - 30, displayName, {
+      const nameText = this.add.text(player.x, player.y - 30, player.username, {
         fontSize: "14px",
-        color: sessionId === this.room.sessionId ? "#00ff00" : "#ffffff",
+        color:
+          player.username === this.registry.get("playerName")
+            ? "#00ff00"
+            : "#ffffff",
         stroke: "#000000",
         strokeThickness: 2,
       });
       nameText.setOrigin(0.5, 1);
       nameText.setDepth(100);
-      this.playerNameTexts[sessionId] = nameText;
+      this.playerNameTexts[player.username] = nameText;
 
-      if (sessionId === this.room.sessionId) {
+      if (player.username === this.registry.get("playerName")) {
         this.currentPlayer = entity;
         this.cameras.main.startFollow(this.currentPlayer, true, 0.1, 0.1);
         this.cameras.main.setZoom(2);
@@ -334,15 +215,9 @@ export class Village extends Phaser.Scene {
         player.onChange(() => {
           this.remoteRef.x = player.x;
           this.remoteRef.y = player.y;
-
-          // Update coin count if it changed
-          if (player.coins !== undefined && player.coins !== this.coinCount) {
-            this.coinCount = player.coins;
-            this.game.events.emit("updateCoins", this.coinCount);
-          }
         });
       } else {
-        player.onChange((changes) => {
+        player.onChange(() => {
           const prevX = entity.x; // Store previous position
           entity.setData("serverX", player.x);
           entity.setData("serverY", player.y);
@@ -419,32 +294,19 @@ export class Village extends Phaser.Scene {
           repeat: 0,
         });
       }
-
-      // Add this after the player.onChange handler in the player creation section
-      if (sessionId !== this.room.sessionId) {
-        // Listen for changes to player data (including name)
-        player.data.onChange(() => {
-          if (player.data.name && this.playerNameTexts[sessionId]) {
-            this.playerNameTexts[sessionId].setText(player.data.name);
-            console.log(
-              `Updated name for ${sessionId} to ${player.data.name} via data change`
-            );
-          }
-        });
-      }
     });
 
-    this.room.state.players.onRemove((player, sessionId) => {
-      const entity = this.playerEntities[sessionId];
+    this.room.state.players.onRemove((player) => {
+      const entity = this.playerEntities[player.username];
       if (entity) {
         entity.destroy();
-        delete this.playerEntities[sessionId];
+        delete this.playerEntities[player.username];
       }
 
       // Remove player name text
-      if (this.playerNameTexts[sessionId]) {
-        this.playerNameTexts[sessionId].destroy();
-        delete this.playerNameTexts[sessionId];
+      if (this.playerNameTexts[player.username]) {
+        this.playerNameTexts[player.username].destroy();
+        delete this.playerNameTexts[player.username];
       }
     });
 
@@ -555,8 +417,11 @@ export class Village extends Phaser.Scene {
 
     // Update mouse input handling
     this.input.on("pointerdown", (pointer) => {
-      if (pointer.leftButtonDown() && !this.isAttacking) {
-        this.isAttacking = true;
+      if (
+        pointer.leftButtonDown() &&
+        !this.currentPlayer.getData("isAttacking")
+      ) {
+        this.currentPlayer.setData("isAttacking", true);
         this.inputPayload.attack = true;
 
         // Play attack animation
@@ -565,7 +430,7 @@ export class Village extends Phaser.Scene {
         // Listen for animation complete
         this.currentPlayer.on("animationcomplete", (animation) => {
           if (animation.key === "character-attack") {
-            this.isAttacking = false;
+            this.currentPlayer.setData("isAttacking", false);
             this.inputPayload.attack = false;
           }
         });
@@ -597,26 +462,6 @@ export class Village extends Phaser.Scene {
         entity.setData("serverY", loot.y);
       });
     });
-
-    this.room.state.loot.onRemove((loot, index) => {
-      const entity = this.lootEntities[index];
-      if (entity) {
-        // Optional: Add collection animation before destroying
-        this.tweens.add({
-          targets: entity,
-          alpha: 0,
-          y: entity.y - 20,
-          duration: 200,
-          onComplete: () => {
-            entity.destroy();
-            delete this.lootEntities[index];
-          },
-        });
-      }
-    });
-
-    // Add Z key for collection
-    this.collectKey = this.input.keyboard.addKey("Z");
 
     // Update the loot handling to show collection animation
     this.room.state.loot.onChange((loot, index) => {
@@ -678,11 +523,6 @@ export class Village extends Phaser.Scene {
   }
 
   update(time: number, delta: number): void {
-    // Update coin count in UI scene
-    if (this.coinCount !== undefined) {
-      this.game.events.emit("updateCoins", this.coinCount);
-    }
-
     // skip remaining loop if not connected yet.
     if (!this.currentPlayer) {
       return;
@@ -707,121 +547,119 @@ export class Village extends Phaser.Scene {
     const gravity = 0.5;
     const jumpVelocity = -12;
 
-    // Only process game input when chat is not focused
-    if (!this.chatInputActive) {
-      this.inputPayload.left = this.cursorKeys.left.isDown;
-      this.inputPayload.right = this.cursorKeys.right.isDown;
-      this.inputPayload.up = this.cursorKeys.up.isDown;
-      this.inputPayload.down = this.cursorKeys.down.isDown;
-      this.inputPayload.jump = this.cursorKeys.space.isDown;
-      this.inputPayload.attack = this.isAttacking;
-      this.inputPayload.tick = this.currentTick;
+    this.inputPayload.left = this.cursorKeys.left.isDown;
+    this.inputPayload.right = this.cursorKeys.right.isDown;
+    this.inputPayload.up = this.cursorKeys.up.isDown;
+    this.inputPayload.down = this.cursorKeys.down.isDown;
+    this.inputPayload.jump = this.cursorKeys.space.isDown;
+    this.inputPayload.attack = this.currentPlayer.getData("isAttacking");
+    this.inputPayload.tick = this.currentTick;
 
-      // Only send messages if the room is still connected
-      if (this.room && this.room.connection.isOpen) {
-        this.room.send(0, this.inputPayload);
-      }
+    // Only send messages if the room is still connected
+    if (this.room && this.room.connection.isOpen) {
+      this.room.send(0, this.inputPayload);
+    }
 
-      // Store previous position for collision checking
-      const prevX = this.currentPlayer.x;
-      const prevY = this.currentPlayer.y;
+    // Store previous position for collision checking
+    const prevX = this.currentPlayer.x;
+    const prevY = this.currentPlayer.y;
 
-      // Store previous Y position for one-way platform collision
-      this.currentPlayer.setData("prevY", this.currentPlayer.y);
+    // Store previous Y position for one-way platform collision
+    this.currentPlayer.setData("prevY", this.currentPlayer.y);
 
-      // Only allow movement if not attacking and chat is not focused
-      if (!this.isAttacking) {
-        // Handle horizontal movement
-        if (this.inputPayload.left) {
-          this.currentPlayer.x -= horizontalVelocity;
-          // Add null checks before accessing player properties
-          if (this.room && this.room.state && this.room.state.players) {
-            const player = this.room.state.players.get(this.room.sessionId);
-            if (player) {
-              player.isFacingLeft = true;
-            }
-          }
-          // Check horizontal collision
-          for (const obstacle of this.obstacles) {
-            if (this.checkCollision(this.currentPlayer, obstacle)) {
-              this.currentPlayer.x = prevX;
-              break;
-            }
-          }
-        } else if (this.inputPayload.right) {
-          this.currentPlayer.x += horizontalVelocity;
-          // Add null checks before accessing player properties
-          if (this.room && this.room.state && this.room.state.players) {
-            const player = this.room.state.players.get(this.room.sessionId);
-            if (player) {
-              player.isFacingLeft = false;
-            }
-          }
-          // Check horizontal collision
-          for (const obstacle of this.obstacles) {
-            if (this.checkCollision(this.currentPlayer, obstacle)) {
-              this.currentPlayer.x = prevX;
-              break;
-            }
+    // Only allow movement if not attacking and chat is not focused
+    if (!this.currentPlayer.getData("isAttacking")) {
+      // Handle horizontal movement
+      if (this.inputPayload.left) {
+        this.currentPlayer.x -= horizontalVelocity;
+        // Add null checks before accessing player properties
+        if (this.room && this.room.state && this.room.state.players) {
+          const player = this.room.state.players.get(
+            this.registry.get("playerName")
+          );
+          if (player) {
+            player.isFacingLeft = true;
           }
         }
-
-        // Apply jump if grounded
-        if (
-          this.inputPayload.jump &&
-          this.currentPlayer.getData("isGrounded")
-        ) {
-          this.currentPlayer.setData("velocityY", jumpVelocity);
-          this.currentPlayer.setData("isGrounded", false);
+        // Check horizontal collision
+        for (const obstacle of this.obstacles) {
+          if (this.checkCollision(this.currentPlayer, obstacle)) {
+            this.currentPlayer.x = prevX;
+            break;
+          }
+        }
+      } else if (this.inputPayload.right) {
+        this.currentPlayer.x += horizontalVelocity;
+        // Add null checks before accessing player properties
+        if (this.room && this.room.state && this.room.state.players) {
+          const player = this.room.state.players.get(
+            this.registry.get("playerName")
+          );
+          if (player) {
+            player.isFacingLeft = false;
+          }
+        }
+        // Check horizontal collision
+        for (const obstacle of this.obstacles) {
+          if (this.checkCollision(this.currentPlayer, obstacle)) {
+            this.currentPlayer.x = prevX;
+            break;
+          }
         }
       }
 
-      // Apply gravity
-      let velocityY = this.currentPlayer.getData("velocityY") || 0;
-      velocityY += gravity;
-      this.currentPlayer.y += velocityY;
-      this.currentPlayer.setData("velocityY", velocityY);
-
-      // Check vertical collisions
-      let isGrounded = false;
-      for (const obstacle of this.obstacles) {
-        if (this.checkCollision(this.currentPlayer, obstacle)) {
-          const playerBottom = prevY + 16; // half player height
-          const obstacleTop = obstacle.y - obstacle.height / 2;
-
-          if (playerBottom <= obstacleTop) {
-            // Landing on top of platform
-            this.currentPlayer.y = obstacleTop - 16;
-            this.currentPlayer.setData("velocityY", 0);
-            isGrounded = true;
-          } else {
-            // Other vertical collisions
-            this.currentPlayer.y = prevY;
-            this.currentPlayer.setData("velocityY", 0);
-          }
-          break;
-        }
-      }
-      this.currentPlayer.setData("isGrounded", isGrounded);
-
-      this.localRef.x = this.currentPlayer.x;
-      this.localRef.y = this.currentPlayer.y;
-
-      // Handle collect key
-      if (this.collectKey.isDown) {
-        this.room.send("collectLoot");
+      // Apply jump if grounded
+      if (this.inputPayload.jump && this.currentPlayer.getData("isGrounded")) {
+        this.currentPlayer.setData("velocityY", jumpVelocity);
+        this.currentPlayer.setData("isGrounded", false);
       }
     }
 
+    // Apply gravity
+    let velocityY = this.currentPlayer.getData("velocityY") || 0;
+    velocityY += gravity;
+    this.currentPlayer.y += velocityY;
+    this.currentPlayer.setData("velocityY", velocityY);
+
+    // Check vertical collisions
+    let isGrounded = false;
+    for (const obstacle of this.obstacles) {
+      if (this.checkCollision(this.currentPlayer, obstacle)) {
+        const playerBottom = prevY + 16; // half player height
+        const obstacleTop = obstacle.y - obstacle.height / 2;
+
+        if (playerBottom <= obstacleTop) {
+          // Landing on top of platform
+          this.currentPlayer.y = obstacleTop - 16;
+          this.currentPlayer.setData("velocityY", 0);
+          isGrounded = true;
+        } else {
+          // Other vertical collisions
+          this.currentPlayer.y = prevY;
+          this.currentPlayer.setData("velocityY", 0);
+        }
+        break;
+      }
+    }
+    this.currentPlayer.setData("isGrounded", isGrounded);
+
+    this.localRef.x = this.currentPlayer.x;
+    this.localRef.y = this.currentPlayer.y;
+
+    // Handle collect key
+    if (this.collectKey && this.collectKey.isDown) {
+      this.room.send("collectLoot");
+    }
+
     // Update the interpolation for other players
-    for (let sessionId in this.playerEntities) {
-      if (sessionId === this.room.sessionId) {
+    for (let username in this.playerEntities) {
+      if (username === this.registry.get("playerName")) {
         continue;
       }
 
-      const entity = this.playerEntities[sessionId];
+      const entity = this.playerEntities[username];
       if (!entity || !entity.scene || !entity.data?.values) {
-        delete this.playerEntities[sessionId];
+        delete this.playerEntities[username];
         continue;
       }
 
@@ -861,7 +699,7 @@ export class Village extends Phaser.Scene {
 
     // Update animations
     if (this.currentPlayer && this.currentPlayer.scene) {
-      if (this.isAttacking) {
+      if (this.currentPlayer.getData("isAttacking")) {
         this.currentPlayer.play("character-attack", true);
       } else if (!this.currentPlayer.getData("isGrounded")) {
         this.currentPlayer.play("character-jump", true);
@@ -874,9 +712,9 @@ export class Village extends Phaser.Scene {
     }
 
     // Update player name positions
-    for (let sessionId in this.playerEntities) {
-      const entity = this.playerEntities[sessionId];
-      const nameText = this.playerNameTexts[sessionId];
+    for (let username in this.playerEntities) {
+      const entity = this.playerEntities[username];
+      const nameText = this.playerNameTexts[username];
 
       if (entity && nameText && entity.scene) {
         nameText.x = entity.x;
@@ -940,15 +778,10 @@ export class Village extends Phaser.Scene {
 
   // Add a shutdown method to clean up resources
   shutdown() {
-    // Clean up the chat UI
-    if (this.chatUI) {
-      this.chatUI.destroy();
-    }
-
     // Clean up player name texts
-    for (const sessionId in this.playerNameTexts) {
-      if (this.playerNameTexts[sessionId]) {
-        this.playerNameTexts[sessionId].destroy();
+    for (const username in this.playerNameTexts) {
+      if (this.playerNameTexts[username]) {
+        this.playerNameTexts[username].destroy();
       }
     }
     this.playerNameTexts = {};
