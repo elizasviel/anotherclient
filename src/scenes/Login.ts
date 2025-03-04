@@ -113,6 +113,10 @@ export class Login extends Phaser.Scene {
 
       console.log("Storing player data in registry...");
       // Store player data and password in the game registry
+
+      //so if I kill a monster and gain exp what happens?
+      //that's fine because we put exp in state?
+      //data in frontend registry to enable movement between rooms
       this.registry.set("playerData", data.playerData);
       this.registry.set("password", password);
 
