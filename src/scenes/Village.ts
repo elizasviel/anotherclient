@@ -91,45 +91,10 @@ export class Village extends Phaser.Scene {
     );
   }
 
-  async connect() {
-    // add connection status text
-    const connectionStatusText = this.add
-      .text(0, 0, "Trying to connect with the server...")
-      .setStyle({ color: "#ff0000" })
-      .setPadding(4);
-
-    const client = new Client("ws://localhost:2567");
-
-    try {
-      // Get credentials from registry
-      const playerData = this.registry.get("playerData");
-      const password = this.registry.get("password");
-
-      if (!playerData?.username || !password) {
-        throw new Error("Missing credentials");
-      }
-
-      this.room = await client.joinOrCreate("village", {
-        username: playerData.username,
-        password: password,
-      });
-
-      console.log("VILLAGE: Connected to server", this.room);
-
-      // connection successful!
-      connectionStatusText.destroy();
-    } catch (e) {
-      // couldn't connect
-      connectionStatusText.text = "Could not connect with the server.";
-      console.error("Connection error:", e);
-
-      // Redirect to login on error
-      this.scene.start("login");
-    }
-  }
-
   async create() {
-    await this.connect();
+    this.room = this.registry.get("room");
+    this.client = this.registry.get("client");
+
     console.log("CREATING VILLAGE");
     const bg = this.add.image(0, 0, "forest-bg");
     bg.setOrigin(0, 0);
@@ -150,9 +115,6 @@ export class Village extends Phaser.Scene {
     bg.setDisplaySize(mapWidth, mapHeight);
     this.physics.world.setBounds(0, 0, mapWidth, mapHeight);
     this.cameras.main.setBounds(0, 0, mapWidth, mapHeight);
-    //would this support movement between maps?
-    this.room = this.registry.get("room");
-    this.client = this.registry.get("client");
     this.cursorKeys = this.input.keyboard.createCursorKeys();
     this.collectKey = this.input.keyboard.addKey("Z");
     this.setupPortalCollisions();
@@ -573,3 +535,5 @@ export class Village extends Phaser.Scene {
     }
   }
 }
+
+//note: removed second connect call
